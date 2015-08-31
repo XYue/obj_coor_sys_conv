@@ -225,6 +225,8 @@ void main(int argc, char **argv)
 
 	do
 	{
+		bool output_gk3 = false;
+
 		if (argc != 4)
 		{
 			std::cout<<"Usage:"<<std::endl;
@@ -240,12 +242,8 @@ void main(int argc, char **argv)
 		std::stringstream sstr;
 
 		Eigen::Matrix3d R;
-// 		R << 0.309610439828742,0.922137221816021,-0.231957581662002,
-// 			-0.931744385673933,0.34289234734546,0.119487396394037,
-// 			0.189720255413487,0.179130629076525,0.965359229723573;
 		Eigen::Vector3d translation;
-//		translation << 801907.318060929,2493195.70536571,356.481623221149;
-		double scale/* = 102.366031424185*/;
+		double scale;
 		std::string proj_cmd;
 		
 		if (ReadFromXml(param_file, translation, R, scale, proj_cmd))
@@ -284,17 +282,20 @@ void main(int argc, char **argv)
 			Eigen::Vector3d dst_v;
 
 			sstr >> ori_v(0) >> ori_v(1) >> ori_v (2);
-			utm = scale * R * ori_v + translation;
+			utm = scale * R * ori_v;
 
-			bool output_gk3 = false;
 			if (output_gk3)
 			{
+				utm += translation;
+
 				if (utm_to_GK3(proj_cmd, utm, dst_v,1))
 				{
 					std::cout<<"Converting from utm to GK3 failed."<<std::endl;
 					goto error0;
 				}
-			} else dst_v = utm;
+			} else {
+				dst_v = utm;
+			}
 
 			o_file << "v " 
 				<< dst_v(0) << " "
@@ -304,6 +305,60 @@ void main(int argc, char **argv)
 
 		i_file.close();
 		o_file.close();
+
+
+		// save translation point
+		if (!output_gk3)
+		{
+			std::string longlat_proj_cmd = "+proj=longlat +datum=WGS84 +ellps=WGS84";
+			projPJ sproj = pj_init_plus(proj_cmd.c_str());
+			projPJ dproj = pj_init_plus(longlat_proj_cmd.c_str());
+			bool valid = false;
+
+			do 
+			{
+				if(!sproj || !dproj) break;
+
+				double longlat[3];
+				longlat[0] = translation[0];
+				longlat[1] = translation[1];
+				longlat[2] = translation[2];
+
+				if(pj_is_latlong(sproj)) break;
+
+				if(!pj_transform(sproj, dproj, 1, 0, longlat, longlat+1, longlat+2) && 
+					pj_is_latlong(dproj))
+				{
+					longlat[0] *= RAD_TO_DEG;
+					longlat[1] *= RAD_TO_DEG;
+				} else break;
+
+				std::ofstream longlat_file(output_file + ".longlat");
+				if (longlat_file.good())
+				{
+					longlat_file << std::setprecision(15)
+						<< longlat[0] << " " << longlat[1] << " " << longlat[2] << std::endl;
+					longlat_file.close();
+				}
+
+				valid = true;
+			} while (0);
+
+			if(dproj)
+			{
+				pj_free(dproj);
+				dproj = NULL;
+			}
+			if(sproj)
+			{
+				pj_free(sproj);
+				sproj = NULL;
+			}
+
+			if (!valid) break;
+		}
+		
+
 
 		rtn = 0;
 
